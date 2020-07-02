@@ -2668,8 +2668,8 @@ bool MessagePatcher(bool State)
 	BYTE FakeMessagesCheck[2];
 	if (!RPM(Exe + OFFSET_FAKE_MESSAGE, &FakeMessagesCheck, sizeof(FakeMessagesCheck))) return false;
 
-	BYTE FakeMessagesEnabled[] = { 0xB0, 0x01 };
-	BYTE FakeMessagesDisabled[] = { 0x32, 0xC0 };
+	BYTE FakeMessagesEnabled[] = { 0xB2, 0x00 };
+	BYTE FakeMessagesDisabled[] = { 0xB2, 0xFF };
 
 	if (!memcmp(FakeMessagesCheck, FakeMessagesEnabled, sizeof(FakeMessagesEnabled)))
 	{

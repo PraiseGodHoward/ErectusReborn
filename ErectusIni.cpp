@@ -1,6 +1,6 @@
 #include "ErectusInclude.h"
 
-mINI::INIFile file("Erectus.ini");
+mINI::INIFile file("Settings.ini");
 mINI::INIStructure ini;
 
 OverlaySettingsA DefaultPlayerSettings
