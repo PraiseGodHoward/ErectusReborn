@@ -29,7 +29,7 @@ DWORD WINAPI BufferEntityListThread(LPVOID lpParameter)
 			BufferEntityListCounter = 0;
 			if (!BufferEntityListUpdated)
 			{
-				BufferEntityListUpdated = UpdateBufferEntityList();
+				BufferEntityListUpdated = UpdateBufferEntityVector();
 				if (!BufferEntityListUpdated)
 				{
 					CustomEntityListDestructionQueued = true;

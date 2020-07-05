@@ -54,6 +54,27 @@ bool AllowMessages = false;
 int KnownRecipeArraySize = 0;
 DWORD KnownRecipeArray[0x1000];
 
+enum class FormTypes : BYTE
+{
+	TesObjectArmo = 0x26,
+	TesObjectBook = 0x27,
+	TesObjectCont = 0x28,
+	TesObjectMisc = 0x2C,
+	CurrencyObject = 0x2F,
+	TesFlora = 0x35,
+	TesObjectWeap = 0x37,
+	TesAmmo = 0x38,
+	TesNpc = 0x39,
+	TesKey = 0x3C,
+	AlchemyItem = 0x3D,
+	TesUtilityItem = 0x3E,
+	BgsNote = 0x40,
+	TesLevItem = 0x48,
+	TesObjectRefr = 0x50,  //used in REFR objects, ref to item
+	TesActor = 0x51, //used in REFR objects, ref to npc
+	PlayerCharacter = 0xB5 //also used in REFR objects, ref to player
+};
+
 DWORD LegendaryFormidArray[]
 {
 	0x00425E28, 0x004392CD, 0x0037F7D9, 0x001A7B80, 0x001A7AF6, 0x001A7BE2, 0x001A7BD3, 0x001A7AB2, 0x001A7B88,
@@ -190,7 +211,77 @@ DWORD64 GetLocalPlayerPtr(bool CheckMainMenu)
 	return LocalPlayerPtr;
 }
 
-DWORD64 *GetEntityList(int *Size)
+std::vector<DWORD64> GetEntityPtrList()
+{
+	std::vector<DWORD64> result;
+
+	DWORD64 entityListTypePtr;
+	if (!RPM(Exe + OFFSET_ENTITY_LIST, &entityListTypePtr, sizeof entityListTypePtr))
+		return result;
+	if (!Valid(entityListTypePtr))
+		return result;
+
+	//1) Get LoadedAreaManager
+	EntityListType manager{};
+	if (!RPM(entityListTypePtr, &manager, sizeof manager))
+		return result;
+	if (!Valid(manager.InteriorListPtr) || !Valid(manager.InteriorListCheck) || !Valid(manager.ExteriorListPtr) || !Valid(manager.ExteriorListCheck))
+		return result;
+
+	DWORD64 cellPtrArrayPtr;
+	int cellPtrArraySize;
+
+	//2) Select  interior or exterior objectlist
+	if (manager.InteriorListPtr != manager.InteriorListCheck)
+	{
+		cellPtrArrayPtr = manager.InteriorListPtr;
+		cellPtrArraySize = 2;
+	}
+	else if (manager.ExteriorListPtr != manager.ExteriorListCheck)
+	{
+		cellPtrArrayPtr = manager.ExteriorListPtr;
+		cellPtrArraySize = 50;
+	}
+	else return result; // sthg went wrong
+
+	//3) Read the array of pointers to cells
+	auto cellPtrArray = std::make_unique<DWORD64[]>(cellPtrArraySize);
+	if (!RPM(cellPtrArrayPtr, cellPtrArray.get(), cellPtrArraySize * sizeof DWORD64))
+		return result;
+
+	//4) Read each cell and push object pointers into objectPtrs
+	for (auto i = 0; i < cellPtrArraySize; i++)
+	{
+		if (i % 2 == 0)
+			continue;
+
+		TesObjectCell cell{};
+		if (!RPM(cellPtrArray[i], &cell, sizeof TesObjectCell))
+			continue;
+		if (!Valid(cell.objectListBeginPtr) || !Valid(cell.objectListEndPtr))
+			continue;
+
+		auto itemArraySize = (cell.objectListEndPtr - cell.objectListBeginPtr) / sizeof(DWORD64);
+		auto objectPtrArray = std::make_unique<DWORD64[]>(itemArraySize);
+		if (!RPM(cell.objectListBeginPtr, objectPtrArray.get(), itemArraySize * sizeof DWORD64))
+			continue;
+
+		result.insert(result.end(), objectPtrArray.get(), objectPtrArray.get() + itemArraySize);
+	}
+
+	return  result;
+}
+
+DWORD64* GetEntityList(int* Size)
+{
+	auto entityPointerVector = GetEntityPtrList();
+	auto List = new DWORD64[entityPointerVector.size()];
+	*Size = entityPointerVector.size();
+	std::copy(entityPointerVector.begin(), entityPointerVector.end(), List);
+	return List;
+}
+
+DWORD64 *GetEntityListBackup(int *Size)
 {
 	DWORD64 EntityListTypePtr;
 	if (!RPM(Exe + OFFSET_ENTITY_LIST, &EntityListTypePtr, sizeof(EntityListTypePtr))) return nullptr;
@@ -1468,6 +1559,88 @@ char *GetEntityName(DWORD64 Ptr)
 	return Name;
 }
 
+bool UpdateBufferEntityVector()
+{
+	std::vector<CustomEntry> entities{};
+
+	auto localPlayerPtr = GetLocalPlayerPtr(true);
+	if (!Valid(localPlayerPtr))
+		return false;
+
+	Entity localPlayer{};
+	if (!RPM(localPlayerPtr, &localPlayer, sizeof localPlayer))
+		return false;
+
+	auto bufferList = GetEntityPtrList();
+	if (bufferList.empty())
+		return false;
+
+	for (auto entityPtr : bufferList)
+	{
+		if (!Valid(entityPtr))
+			continue;
+		if (entityPtr == localPlayerPtr)
+			continue;
+
+		Entity entityData{};
+		if (!RPM(entityPtr, &entityData, sizeof entityData))
+			continue;
+		if (!Valid(entityData.ReferencePtr))
+			continue;
+
+		if (entityData.FormType == static_cast<BYTE>(FormTypes::PlayerCharacter))
+			continue;
+
+		Reference referenceData{};
+		if (!RPM(entityData.ReferencePtr, &referenceData, sizeof referenceData))
+			continue;
+
+		auto entityFlag = CUSTOM_ENTRY_DEFAULT;
+		DWORD64 entityNamePtr = 0;
+		auto enabledDistance = 0;
+
+		GetCustomEntityData(referenceData, &entityFlag, &entityNamePtr, &enabledDistance, CustomScrapLooterSettings.ScrapOverrideEnabled, CustomHarvesterSettings.HarvesterOverrideEnabled);
+		if (entityFlag & CUSTOM_ENTRY_INVALID)
+			continue;
+
+		auto distance = GetDistance(entityData.Position, localPlayer.Position);
+		auto normalDistance = static_cast<int>(distance * 0.01f);
+		if (normalDistance > enabledDistance)
+			continue;
+
+		auto entityName = GetEntityName(entityNamePtr);
+
+		if (entityName && std::string(entityName).empty())
+		{
+			entityFlag |= CUSTOM_ENTRY_UNNAMED;
+			std::string entityNameString = std::to_string(entityData.Formid) + '[' + std::to_string(referenceData.FormType) + ']';
+			entityName = &entityNameString[0];
+		}
+
+		CustomEntry entry;
+		entry.EntityPtr = entityPtr;
+		entry.ReferencePtr = entityData.ReferencePtr;
+		entry.EntityFormid = entityData.Formid;
+		entry.ReferenceFormid = referenceData.Formid;
+		entry.Flag = entityFlag;
+		entry.Name = entityName;
+
+		entities.push_back(entry);
+	}
+
+	if (!entities.empty())
+	{
+		auto numEntities = entities.size();
+		BufferEntityList = new CustomEntry[entities.size()];
+		CustomEntry* CustomList = &entities[0];
+		memcpy(&*BufferEntityList, &*CustomList, entities.size() * sizeof(CustomEntry));
+		BufferEntityListSize = entities.size();
+		return true;
+	}
+
+	return false;
+}
+
 bool UpdateBufferEntityList()
 {
 	DWORD64 LocalPlayerPtr = GetLocalPlayerPtr(true);
@@ -1477,7 +1650,7 @@ bool UpdateBufferEntityList()
 	if (!RPM(LocalPlayerPtr, &LocalPlayer, sizeof(LocalPlayer))) return false;
 
 	int BufferSize = 0;
-	DWORD64 *BufferList = GetEntityList(&BufferSize);
+	DWORD64* BufferList = GetEntityList(&BufferSize);
 	if (BufferList == nullptr) return false;
 
 	int CustomListSize = 0;

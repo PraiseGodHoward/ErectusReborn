@@ -196,6 +196,15 @@ public:
 	int ListSize;//0x98
 };
 
+class TesObjectCell
+{
+public:
+	BYTE padding0000[0xA0];
+	DWORD64 objectListBeginPtr;//0xA0
+	DWORD64 objectListEndPtr;//0xA8
+};
+
+
 class Entity
 {
 public:
@@ -206,7 +215,9 @@ public:
 	BYTE HarvestFlagB;//0x19
 	BYTE Padding001A[0x6];
 	DWORD Formid;//0x20
-	BYTE Padding0024[0x14];
+	byte padding0024[0x2];//0x24
+	BYTE FormType;//0x26
+	BYTE padding0027[0x11];//0x27
 	BYTE IdValue[4];//0x38
 	BYTE Padding003C[0x14];
 	DWORD64 vtable0050;//0x50
@@ -242,7 +253,9 @@ public:
 	BYTE RecordFlagA;//0x18
 	BYTE Padding0019[0x7];
 	DWORD Formid;//0x20
-	BYTE Padding0024[0x74];
+	BYTE Padding0024[0x2];//0x24
+	BYTE FormType;//0x26
+	BYTE Padding0027[0x71];//0x27
 	DWORD64 NamePtr0098;//0x98
 	BYTE Padding00A0[0x10];
 	DWORD64 NamePtr00B0;//0xB0
@@ -1475,6 +1488,7 @@ extern bool AllowMessages;
 extern DWORD64 GetAddress(DWORD Formid);
 extern DWORD64 GetPtr(DWORD Formid);
 
+extern bool UpdateBufferEntityVector();
 extern bool UpdateBufferEntityList();
 extern void DeleteBufferEntityList();
 extern void DeleteCustomEntityList();
